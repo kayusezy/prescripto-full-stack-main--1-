@@ -1,18 +1,22 @@
 import express from "express";
 import cors from "cors";
 import "dotenv/config";
-import connectDB from "./config/mongodb.js";
-import connectCloudinary from "./config/cloudinary.js";
-import userRouter from "./routes/userRoute.js";
-import doctorRouter from "./routes/doctorRoute.js";
-import adminRouter from "./routes/adminRoute.js";
+import connectDB from "../config/mongodb.js";
+import connectCloudinary from "../config/cloudinary.js";
+import userRouter from "../routes/userRoute.js";
+import doctorRouter from "../routes/doctorRoute.js";
+import adminRouter from "../routes/adminRoute.js";
 
 const app = express();
+
+const PORT = process.env.PORT || 5001;
 
 connectDB();
 connectCloudinary();
 
 const allowedOrigins = [
+  "http://localhost:5175",
+  "http://localhost:5173",
   "https://frontend-eosin-kappa-58.vercel.app",
   "https://admin-yourdomain.vercel.app"
 ];
@@ -27,7 +31,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  allowedHeaders: ["Content-Type", "Authorization", "token"]
 }));
 
 app.options("*", cors());
@@ -42,6 +46,12 @@ app.use("/api/doctor", doctorRouter);
 app.get("/", (req, res) => {
   res.send("API Working");
 });
+
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Server is running locally on port ${PORT}`);
+  });
+}
 
 // ❌ DO NOT use app.listen()
 // ✅ Instead, export the app

@@ -1,4 +1,4 @@
-import React, { useContext, useState } from 'react'
+import { useContext, useState } from 'react'
 import { assets } from '../assets/assets'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { AppContext } from '../context/AppContext'
@@ -12,7 +12,7 @@ const Navbar = () => {
 
   const logout = () => {
     localStorage.removeItem('token')
-    setToken(false)
+    setToken('')
     navigate('/login')
   }
 
@@ -40,7 +40,7 @@ const Navbar = () => {
 
       <div className='flex items-center gap-4 '>
         {
-          token && userData
+          token && userData && token !== ''
             ? <div className='flex items-center gap-2 cursor-pointer group relative'>
               <img className='w-8 rounded-full' src={userData.image} alt="" />
               <img className='w-2.5' src={assets.dropdown_icon} alt="" />
