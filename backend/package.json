@@ -4,8 +4,8 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "server": "nodemon server.js"
+    "test": "node server",
+    "dev": "nodemon server"
   },
   "author": "",
   "license": "ISC",

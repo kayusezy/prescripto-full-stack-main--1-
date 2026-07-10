@@ -3,3 +3,4 @@
 admin/.env
 frontend/.env
 node_modules/
+.vercel
