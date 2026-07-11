@@ -1,4 +1,6 @@
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import axios from "axios";
 import bcrypt from "bcrypt";
 import validator from "validator";
 import userModel from "../models/userModel.js";
@@ -6,14 +8,10 @@ import doctorModel from "../models/doctorModel.js";
 import appointmentModel from "../models/appointmentModel.js";
 import { v2 as cloudinary } from 'cloudinary'
 import stripe from "stripe";
-import razorpay from 'razorpay';
 
 // Gateway Initialize
 const stripeInstance = new stripe(process.env.STRIPE_SECRET_KEY)
-const razorpayInstance = new razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET,
-})
+
 
 // API to register user
 const registerUser = async (req, res) => {
@@ -235,113 +233,299 @@ const listAppointment = async (req, res) => {
     }
 }
 
-// API to make payment of appointment using razorpay
-const paymentRazorpay = async (req, res) => {
+// PAYSTACK INTEGRATION ENGINE
+
+const paymentPaystack = async (req, res) => {
     try {
+        const { appointmentId, userId } = req.body; 
+        const appointmentData = await appointmentModel.findById(appointmentId);
+        const userData = await userModel.findById(userId);
 
-        const { appointmentId } = req.body
-        const appointmentData = await appointmentModel.findById(appointmentId)
-
-        if (!appointmentData || appointmentData.cancelled) {
-            return res.json({ success: false, message: 'Appointment Cancelled or not found' })
+        if (!appointmentData || appointmentData.cancelled || appointmentData.payment) {
+            return res.status(400).json({ success: false, message: 'Invalid or completed appointment' });
         }
 
-        // creating options for razorpay payment
-        const options = {
-            amount: appointmentData.amount * 100,
-            currency: process.env.CURRENCY,
-            receipt: appointmentId,
-        }
+        // Paystack uses subunits (Kobo). Multiply real DB fees securely here.
+        const amountInKobo = appointmentData.amount * 100; 
 
-        // creation of an order
-        const order = await razorpayInstance.orders.create(options)
+        const paystackResponse = await axios.post(
+            'https://api.paystack.co/transaction/initialize',
+            {
+                email: userData.email,
+                amount: amountInKobo,
+                reference: `PAYSTACK_${appointmentData._id}_${Date.now()}`,
+                callback_url: `${req.headers.origin}/my-appointments`
+            },
+            {
+                headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
+            }
+        );
 
-        res.json({ success: true, order })
-
+        res.json({ success: true, authorization_url: paystackResponse.data.data.authorization_url });
     } catch (error) {
-        console.log(error)
-        res.json({ success: false, message: error.message })
+        console.log(error.response?.data || error.message);
+        res.status(500).json({ success: false, message: "Paystack initiation failed" });
     }
-}
+};
 
-// API to verify payment of razorpay
-const verifyRazorpay = async (req, res) => {
+const paystackWebhook = async (req, res) => {
     try {
-        const { razorpay_order_id } = req.body
-        const orderInfo = await razorpayInstance.orders.fetch(razorpay_order_id)
+        // Exploit Protection: Cryptographically verify the source is truly Paystack
+        const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+                           .update(JSON.stringify(req.body))
+                           .digest('hex');
 
-        if (orderInfo.status === 'paid') {
-            await appointmentModel.findByIdAndUpdate(orderInfo.receipt, { payment: true })
-            res.json({ success: true, message: "Payment Successful" })
+        if (hash !== req.headers['x-paystack-signature']) {
+            return res.status(401).json({ success: false, message: 'Invalid webhook signature' });
         }
-        else {
-            res.json({ success: false, message: 'Payment Failed' })
+
+        const event = req.body;
+        if (event.event === 'charge.success') {
+            const reference = event.data.reference;
+            const appointmentId = reference.split('_')[1];
+            const paidAmountKobo = event.data.amount;
+
+            const appointment = await appointmentModel.findById(appointmentId);
+            if (!appointment) return res.status(404).send('Appointment not found');
+
+            // Business Logic Validation: Ensure the attacker didn't alter the webhook transaction payload value
+            if (paidAmountKobo !== appointment.amount * 100) {
+                return res.status(400).send('Amount manipulation detected');
+            }
+
+            if (!appointment.payment) {
+                await appointmentModel.findByIdAndUpdate(appointmentId, { payment: true });
+            }
         }
+        res.status(200).send('Webhook Processed');
     } catch (error) {
-        console.log(error)
-        res.json({ success: false, message: error.message })
+        console.log(error);
+        res.status(500).send('Webhook Error');
     }
-}
+};
 
-// API to make payment of appointment using Stripe
+// FLUTTERWAVE INTEGRATION ENGINE
+
+const paymentFlutterwave = async (req, res) => {
+    try {
+        const { appointmentId, userId } = req.body;
+        const appointmentData = await appointmentModel.findById(appointmentId);
+        const userData = await userModel.findById(userId);
+
+        if (!appointmentData || appointmentData.cancelled || appointmentData.payment) {
+            return res.status(400).json({ success: false, message: 'Invalid or completed appointment' });
+        }
+
+        const flwResponse = await axios.post(
+            'https://api.flutterwave.com/v3/payments',
+            {
+                tx_ref: `FLW_${appointmentData._id}_${Date.now()}`,
+                amount: appointmentData.amount,
+                currency: process.env.CURRENCY || 'NGN',
+                redirect_url: `${req.headers.origin}/my-appointments`,
+                customer: {
+                    email: userData.email,
+                    name: userData.name
+                },
+                customizations: { title: "Appointment Payment" }
+            },
+            {
+                headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` }
+            }
+        );
+
+        res.json({ success: true, link: flwResponse.data.data.link });
+    } catch (error) {
+        console.log(error.response?.data || error.message);
+        res.status(500).json({ success: false, message: "Flutterwave initiation failed" });
+    }
+};
+
+const flutterwaveWebhook = async (req, res) => {
+    try {
+        // Exploit Protection: Verify matching secret header configuration token
+        const signature = req.headers['verif-hash'];
+        if (!signature || signature !== process.env.FLUTTERWAVE_WEBHOOK_HASH) {
+            return res.status(401).json({ success: false, message: 'Invalid webhook secret string' });
+        }
+
+        const payload = req.body;
+        if (payload.status === 'successful' || payload.event === 'charge.completed') {
+            const txRef = payload.tx_ref || payload.data?.tx_ref;
+            const appointmentId = txRef.split('_')[1];
+            const paidAmount = payload.amount || payload.data?.amount;
+
+            const appointment = await appointmentModel.findById(appointmentId);
+            if (!appointment) return res.status(404).send('Appointment not found');
+
+            // Business Logic Validation: Confirm exact amount matched to prevent price alterations
+            if (Number(paidAmount) !== Number(appointment.amount)) {
+                return res.status(400).send('Amount discrepancy detected');
+            }
+
+            if (!appointment.payment) {
+                await appointmentModel.findByIdAndUpdate(appointmentId, { payment: true });
+            }
+        }
+        res.status(200).send('Webhook Processed');
+    } catch (error) {
+        console.log(error);
+        res.status(500).send('Webhook Error');
+    }
+} 
+
+const convertNgnToUsd = async (ngnAmount) => {
+    try {
+        // Fetch live conversion rates based on USD
+        const response = await axios.get('https://open.er-api.com/v6/latest/USD');
+
+        // Extract the current NGN rate against 1 USD (e.g., ~1379 NGN per dollar)
+        const ngnRatePerDollar = response.data.rates.NGN;
+
+        // Calculate the USD price
+        const usdAmount = ngnAmount / ngnRatePerDollar;
+
+        // Round up to 2 decimal places to prevent infinite floating-point values
+        return Math.ceil(usdAmount * 100) / 100;
+    } catch (error) {
+        console.error("Currency conversion failed, falling back to static rate:", error);
+        // Backup plan: use a safe, slightly padded static rate if the API goes down
+        return Math.ceil((ngnAmount / 1380) * 100) / 100;
+    }
+};
+
+// Add this to your backend controllers
+const getUsdEquivalent = async (req, res) => {
+    try {
+        const { amountInNgn } = req.query; // Pass the NGN price as a query parameter
+        
+        if (!amountInNgn) {
+            return res.status(400).json({ success: false, message: "Amount required" });
+        }
+
+        // Call the secure helper function we built earlier
+        const usdAmount = await convertNgnToUsd(Number(amountInNgn));
+
+        res.json({ 
+            success: true, 
+            ngnAmount: Number(amountInNgn),
+            usdAmount: usdAmount 
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Conversion failed" });
+    }
+};
+
+// Export it so your router can use it
+export {  };
+
 const paymentStripe = async (req, res) => {
     try {
+        const { appointmentId, userId } = req.body;
+        const appointmentData = await appointmentModel.findById(appointmentId);
 
-        const { appointmentId } = req.body
-        const { origin } = req.headers
-
-        const appointmentData = await appointmentModel.findById(appointmentId)
-
-        if (!appointmentData || appointmentData.cancelled) {
-            return res.json({ success: false, message: 'Appointment Cancelled or not found' })
+        if (!appointmentData || appointmentData.cancelled || appointmentData.payment) {
+            return res.status(400).json({ success: false, message: 'Invalid appointment status' });
         }
 
-        const currency = process.env.CURRENCY.toLocaleLowerCase()
-
-        const line_items = [{
-            price_data: {
-                currency,
-                product_data: {
-                    name: "Appointment Fees"
-                },
-                unit_amount: appointmentData.amount * 100
-            },
-            quantity: 1
-        }]
+        // 1. Perform the conversion on the backend (Input: original NGN amount)
+        const totalInUsd = await convertNgnToUsd(appointmentData.amount); 
+        
+        // 2. Stripe expects amounts in cents (multiply USD by 100)
+        const stripeAmountInCents = Math.round(totalInUsd * 100);
 
         const session = await stripeInstance.checkout.sessions.create({
-            success_url: `${origin}/verify?success=true&appointmentId=${appointmentData._id}`,
-            cancel_url: `${origin}/verify?success=false&appointmentId=${appointmentData._id}`,
-            line_items: line_items,
+            payment_method_types: ['card'],
+            line_items: [{
+                price_data: {
+                    currency: 'usd', // Stripe processes the payment in USD
+                    product_data: {
+                        name: "Appointment Consultation Fee",
+                        description: `Converted from original value: ₦${appointmentData.amount.toLocaleString()}`
+                    },
+                    unit_amount: stripeAmountInCents, 
+                },
+                quantity: 1,
+            }],
             mode: 'payment',
-        })
+            success_url: `${req.headers.origin}/my-appointments?success=true`,
+            cancel_url: `${req.headers.origin}/my-appointments?success=false`,
+            metadata: {
+                appointmentId: appointmentData._id.toString(),
+                expectedNgnAmount: appointmentData.amount.toString(), // Saved for validation checks
+                expectedUsdCents: stripeAmountInCents.toString()
+            }
+        });
 
         res.json({ success: true, session_url: session.url });
 
     } catch (error) {
-        console.log(error)
-        res.json({ success: false, message: error.message })
+        console.log(error);
+        res.status(500).json({ success: false, message: "Stripe payment compilation failed" });
     }
-}
+};
 
-const verifyStripe = async (req, res) => {
+// Cryptographically Secured Stripe Webhook
+const stripeWebhook = async (req, res) => {
+    let event;
+
     try {
+        const sig = req.headers['stripe-signature'];
+        
+        // Exploit Protection: Stripe's official SDK handles the cryptographic signature check.
+        // NOTE: req.body MUST be the raw, unparsed buffer string for Stripe verification to pass.
+        event = stripeInstance.webhooks.constructEvent(
+            req.body, 
+            sig, 
+            process.env.STRIPE_WEBHOOK_SECRET
+        );
+    } catch (err) {
+        console.log(`Webhook Signature Verification Failed: ${err.message}`);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
 
-        const { appointmentId, success } = req.body
+    // Handle the checkout.session.completed event
+    if (event.type === 'checkout.session.completed') {
+        const session = event.data.object;
+        
+        // Retrieve the secure tracking variables we embedded during initialization
+        const appointmentId = session.metadata.appointmentId;
+        const expectedAmount = Number(session.metadata.expectedAmount);
+        const totalPaid = session.amount_total;
 
-        if (success === "true") {
-            await appointmentModel.findByIdAndUpdate(appointmentId, { payment: true })
-            return res.json({ success: true, message: 'Payment Successful' })
+        // Reject transaction if the amount paid deviates from the generated token balance
+        if (totalPaidInCents !== expectedUsdCents) {
+            console.log(`CRITICAL: Currency/Price tampering intercepted for appointment ${appointmentId}`);
+            return res.status(400).send('Transaction price mismatch');
         }
 
-        res.json({ success: false, message: 'Payment Failed' })
+        try {
+            const appointment = await appointmentModel.findById(appointmentId);
+            if (!appointment) {
+                console.log(`Appointment ${appointmentId} not found during webhook processing.`);
+                return res.status(404).send('Appointment not found');
+            }
 
-    } catch (error) {
-        console.log(error)
-        res.json({ success: false, message: error.message })
+            // Business Logic Validation: Ensure actual paid amount matches database expected fee
+            if (totalPaid !== expectedAmount) {
+                console.log(`CRITICAL: Price tampering attempt or mismatch detected for appointment ${appointmentId}`);
+                return res.status(400).send('Amount manipulation detected');
+            }
+
+            // Safe to fulfill the order now
+            if (!appointment.payment) {
+                await appointmentModel.findByIdAndUpdate(appointmentId, { payment: true });
+                console.log(`Appointment ${appointmentId} marked as PAID via secure Stripe Webhook.`);
+            }
+        } catch (error) {
+            console.log(error);
+            return res.status(500).send('Database update error');
+        }
     }
 
-}
+    // Return a 200 response to acknowledge receipt of the event
+    res.json({ received: true });
+};
 
 export {
     loginUser,
@@ -351,8 +535,11 @@ export {
     bookAppointment,
     listAppointment,
     cancelAppointment,
-    paymentRazorpay,
-    verifyRazorpay,
+    paymentPaystack,
+    paystackWebhook,
+    paymentFlutterwave,
+    flutterwaveWebhook,
     paymentStripe,
-    verifyStripe
+    stripeWebhook,
+    getUsdEquivalent,
 }

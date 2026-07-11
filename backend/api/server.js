@@ -7,6 +7,9 @@ import userRouter from "../routes/userRoute.js";
 import doctorRouter from "../routes/doctorRoute.js";
 import adminRouter from "../routes/adminRoute.js";
 
+// Import your new webhook controllers
+import { stripeWebhook, paystackWebhook, flutterwaveWebhook } from "../controllers/userController.js";
+
 const app = express();
 
 const PORT = process.env.PORT || 5001;
@@ -17,6 +20,7 @@ connectCloudinary();
 const allowedOrigins = [
   "http://localhost:5175",
   "http://localhost:5173",
+  "http://localhost:5176",
   "https://frontend-eosin-kappa-58.vercel.app",
   "https://admin-yourdomain.vercel.app"
 ];
@@ -31,10 +35,15 @@ app.use(cors({
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "token"]
+  allowedHeaders: ["Content-Type", "Authorization", "token", "atoken", "dtoken"]
 }));
 
 app.options("*", cors());
+
+//Webhook routes 
+app.post("/api/webhook/stripe", express.raw({ type: "application/json" }), stripeWebhook);
+app.post("/api/webhook/paystack", express.raw({ type: "application/json" }), paystackWebhook);
+app.post("/api/webhook/flutterwave", express.raw({ type: "application/json" }), flutterwaveWebhook);
 
 app.use(express.json());
 
