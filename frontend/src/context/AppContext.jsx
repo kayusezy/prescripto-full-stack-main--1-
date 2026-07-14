@@ -1,3 +1,5 @@
+/* eslint-disable react-hooks/exhaustive-deps */
+/* eslint-disable react/prop-types */
 import { createContext, useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import axios from 'axios'
@@ -60,6 +62,7 @@ const AppContextProvider = (props) => {
         if (token) {
             loadUserProfileData()
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [token])
 
     const value = {
