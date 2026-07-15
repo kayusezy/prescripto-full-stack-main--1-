@@ -21,7 +21,7 @@ const allowedOrigins = [
   "http://localhost:5175",
   "http://localhost:5173",
   "http://localhost:5176",
-  "https://frontend-eosin-kappa-58.vercel.app",
+  "https://prescripto-full-stack-main-1.vercel.app",
   "https://admin-yourdomain.vercel.app"
 ];
 
