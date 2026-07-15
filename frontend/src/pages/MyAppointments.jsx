@@ -7,14 +7,16 @@ import { assets } from '../assets/assets'
 
 const MyAppointments = () => {
 
-    const { backendUrl, token } = useContext(AppContext)
+    const { backendUrl: rawBackendUrl, token } = useContext(AppContext)
+
+    // Sanitize the URL: Remove trailing slash if present so it never doubles up
+    const backendUrl = rawBackendUrl?.endsWith('/') ? rawBackendUrl.slice(0, -1) : rawBackendUrl
 
     const [appointments, setAppointments] = useState([])
     const [payment, setPayment] = useState('')
 
     // state variable to track conversion previews
     const [conversionPreview, setConversionPreview] = useState({ loading: false, usd: null, appointmentId: null });
-
 
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -27,10 +29,9 @@ const MyAppointments = () => {
     // Getting User Appointments Data Using API
     const getUserAppointments = async () => {
         try {
-
-            const { data } = await axios.get(backendUrl + '/api/user/appointments', { headers: { token } })
+            // Safe template literal concatenation
+            const { data } = await axios.get(`${backendUrl}/api/user/appointments`, { headers: { token } })
             setAppointments(data.appointments.reverse())
-
         } catch (error) {
             console.log(error)
             toast.error(error.message)
@@ -39,10 +40,8 @@ const MyAppointments = () => {
 
     // Function to cancel appointment Using API
     const cancelAppointment = async (appointmentId) => {
-
         try {
-
-            const { data } = await axios.post(backendUrl + '/api/user/cancel-appointment', { appointmentId }, { headers: { token } })
+            const { data } = await axios.post(`${backendUrl}/api/user/cancel-appointment`, { appointmentId }, { headers: { token } })
 
             if (data.success) {
                 toast.success(data.message)
@@ -50,12 +49,10 @@ const MyAppointments = () => {
             } else {
                 toast.error(data.message)
             }
-
         } catch (error) {
             console.log(error)
             toast.error(error.message)
         }
-
     }
 
     // Function to fetch Currency convertion Preview from the backend 
@@ -74,12 +71,10 @@ const MyAppointments = () => {
 
     const appointmentFlutterwave = async (appointmentId) => {
         try {
-            // Rule Validation: Pass only the ID. Let the backend handle pricing from the DB.
-            const { data } = await axios.post(backendUrl + '/api/user/payment-flutterwave', { appointmentId }, { headers: { token } })
+            const { data } = await axios.post(`${backendUrl}/api/user/payment-flutterwave`, { appointmentId }, { headers: { token } })
             
             if (data.success) {
                 const { link } = data
-                // Securely redirecting the user out to the provider's server
                 window.location.replace(link)
             } else {
                 toast.error(data.message)
@@ -93,12 +88,10 @@ const MyAppointments = () => {
     // Function to make payment using Paystack (Secure Redirect)
     const appointmentPaystack = async (appointmentId) => {
         try {
-            // Rule Validation: Pass only the ID. Let the backend handle pricing from the DB.
-            const { data } = await axios.post(backendUrl + '/api/user/payment-paystack', { appointmentId }, { headers: { token } })
+            const { data } = await axios.post(`${backendUrl}/api/user/payment-paystack`, { appointmentId }, { headers: { token } })
             
             if (data.success) {
                 const { authorization_url } = data
-                // Securely redirecting the user out to the provider's server
                 window.location.replace(authorization_url)
             } else {
                 toast.error(data.message)
@@ -109,12 +102,10 @@ const MyAppointments = () => {
         }
     }
 
-
-
     // Function to make payment using stripe
     const appointmentStripe = async (appointmentId) => {
         try {
-            const { data } = await axios.post(backendUrl + '/api/user/payment-stripe', { appointmentId }, { headers: { token } })
+            const { data } = await axios.post(`${backendUrl}/api/user/payment-stripe`, { appointmentId }, { headers: { token } })
             if (data.success) {
                 const { session_url } = data
                 window.location.replace(session_url)
@@ -126,8 +117,6 @@ const MyAppointments = () => {
             toast.error(error.message)
         }
     }
-
-
 
     useEffect(() => {
         if (token) {
@@ -158,7 +147,6 @@ const MyAppointments = () => {
                             {!item.cancelled && !item.payment && !item.isCompleted && payment !== item._id && 
                                 <button onClick={ () => {
                                     setPayment(item._id);
-                                    // Fetch the conversion the moment they click pay options
                                     fetchCurrencyPreview(item._id, item.amount);}
                                     } className='text-[#696969] sm:min-w-48 py-2 border rounded hover:bg-primary hover:text-white transition-all duration-300'>Pay Online
                                 </button>
