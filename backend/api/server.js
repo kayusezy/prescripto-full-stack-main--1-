@@ -22,6 +22,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5176",
   "https://prescripto-full-stack-main-1.vercel.app",
+  "https://prescripto-full-stack-main-1-git-main-jon-dannys-projects.vercel.app",
   "https://admin-yourdomain.vercel.app"
 ];
 
