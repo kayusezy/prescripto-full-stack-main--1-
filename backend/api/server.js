@@ -23,6 +23,7 @@ const allowedOrigins = [
   "http://localhost:5176",
   "https://prescripto-full-stack-main-1.vercel.app",
   "https://prescripto-full-stack-main-1-git-main-jon-dannys-projects.vercel.app",
+  'https://prescripto-full-stack-main-1-lcic8crf2-jon-dannys-projects.vercel.app',
   "https://admin-yourdomain.vercel.app"
 ];
 
@@ -30,9 +31,12 @@ app.use(cors({
   origin: function (origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
+    } 
+    // 2. Wildcard check for dynamic Vercel preview/branch deployments
+    if (origin.includes("prescripto-full-stack-main-1") && origin.endsWith(".vercel.app")) {
+      return callback(null, true);
     }
+    callback(new Error("Not allowed by CORS"))
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
