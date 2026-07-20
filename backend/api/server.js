@@ -12,6 +12,15 @@ import { stripeWebhook, paystackWebhook, flutterwaveWebhook } from "../controlle
 
 const app = express();
 
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Database Connection Error" });
+  }
+});
+
 const PORT = process.env.PORT || 5001;
 
 connectDB();
