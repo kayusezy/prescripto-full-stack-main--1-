@@ -53,9 +53,9 @@ app.post("/api/webhook/flutterwave", express.raw({ type: "application/json" }), 
 app.use(express.json());
 
 // API routes
-app.use("/api/user", userRouter);
-app.use("/api/admin", adminRouter);
-app.use("/api/doctor", doctorRouter);
+app.use("/user", userRouter);
+app.use("/admin", adminRouter);
+app.use("/doctor", doctorRouter);
 
 app.get("/", (req, res) => {
   res.send("API Working");
